@@ -25,6 +25,7 @@
 #include "inputleap/Screen.h"
 #include "inputleap/XScreen.h"
 #include "inputleap/ClientArgs.h"
+#include "net/AddressRange.h"
 #include "net/NetworkAddress.h"
 #include "net/TCPSocketFactory.h"
 #include "net/SocketMultiplexer.h"
@@ -61,8 +62,15 @@
 #include <iostream>
 #include <stdio.h>
 #include <sstream>
+#include <stdexcept>
+#include <vector>
 
 #define RETRY_TIME 1.0
+
+// Long enough for a TCP connect, TLS handshake and hello on a local network.
+// A TLS failure surfaces only as this timeout, so it also bounds how long a
+// non-server costs during a scan.
+static const double kScanConnectTimeout = 3.0;
 
 namespace inputleap {
 
@@ -92,6 +100,29 @@ ClientApp::parseArgs(int argc, const char* const* argv)
         if (!args().network_address.empty()) {
             try {
                 *m_serverAddress = NetworkAddress(args().network_address, kDefaultPort);
+
+                std::vector<std::string> hosts;
+                try {
+                    hosts = expand_address_range(m_serverAddress->getHostname());
+                }
+                catch (std::invalid_argument& e) {
+                    LOG_PRINT("%s: %s" BYE,
+                        args().m_exename.c_str(), e.what(), args().m_exename.c_str());
+                    m_bye(kExitArgs);
+                    return;
+                }
+
+                m_serverCandidates.clear();
+                m_serverCandidateIndex = 0;
+                if (hosts.size() > 1) {
+                    for (const auto& host : hosts) {
+                        m_serverCandidates.emplace_back(host, m_serverAddress->getPort());
+                    }
+                    *m_serverAddress = m_serverCandidates.front();
+                    LOG_NOTE("searching for the server at %zu addresses from %s to %s",
+                             hosts.size(), hosts.front().c_str(), hosts.back().c_str());
+                }
+
                 m_serverAddress->resolve();
             }
             catch (XSocketAddress& e) {
@@ -146,7 +177,11 @@ ClientApp::help()
            << "The server address is of the form: [<hostname>][:<port>]. The hostname\n"
            << "must be the address or hostname of the server. Placing brackets around\n"
            << "an IPv6 address is required when also specifying a port number and \n"
-           << "optional otherwise. The default port number is " << kDefaultPort << ".\n";
+           << "optional otherwise. The default port number is " << kDefaultPort << ".\n"
+           << "\n"
+           << "Instead of one hostname, an IPv4 range such as 192.168.1.10-192.168.1.50\n"
+           << "or 192.168.1.10-50 may be given. Each address is tried in turn until one\n"
+           << "of them answers as an InputLeap server.\n";
 
     LOG_PRINT("%s", buffer.str().c_str());
 }
@@ -274,8 +309,30 @@ void ClientApp::handle_client_connected()
     // using CLOG_PRINT here allows the GUI to see that the client is connected
     // regardless of which log level is set
     LOG_PRINT("connected to server");
+    m_connectedToServer = true;
+    if (isScanning()) {
+        LOG_NOTE("found server at %s",
+                 m_serverCandidates[m_serverCandidateIndex].getHostname().c_str());
+    }
     resetRestartTimeout();
     updateStatus();
+}
+
+
+bool ClientApp::isScanning() const
+{
+    return m_serverCandidates.size() > 1;
+}
+
+
+double ClientApp::advanceServerCandidate()
+{
+    m_serverCandidateIndex = (m_serverCandidateIndex + 1) % m_serverCandidates.size();
+    m_client->setServerAddress(m_serverCandidates[m_serverCandidateIndex]);
+
+    // Move straight on to the next address; only pause once the whole range
+    // has been tried, so a scan of a dead range does not spin the CPU.
+    return m_serverCandidateIndex == 0 ? nextRestartTimeout() : 0.0;
 }
 
 
@@ -289,9 +346,17 @@ void ClientApp::handle_client_failed(const Event& e)
         m_events->add_event(EventType::QUIT);
     }
     else {
-        LOG_WARN("failed to connect to server: %s", info.m_what.c_str());
+        if (isScanning()) {
+            // expected for most of a range, so not worth a warning each time
+            LOG_INFO("no server at %s: %s",
+                     m_serverCandidates[m_serverCandidateIndex].getHostname().c_str(),
+                     info.m_what.c_str());
+        } else {
+            LOG_WARN("failed to connect to server: %s", info.m_what.c_str());
+        }
         if (!m_suspended) {
-            scheduleClientRestart(nextRestartTimeout());
+            scheduleClientRestart(isScanning() ? advanceServerCandidate()
+                                               : nextRestartTimeout());
         }
     }
 }
@@ -300,11 +365,18 @@ void ClientApp::handle_client_failed(const Event& e)
 void ClientApp::handle_client_disconnected()
 {
     LOG_NOTE("disconnected from server");
+    // A disconnect before the handshake finished means whatever answered was
+    // not an InputLeap server, so keep scanning. After a real session, come
+    // back to the same address first: the server most likely just restarted,
+    // and if it has moved, the next failure resumes the scan from here.
+    bool wasServer = m_connectedToServer;
+    m_connectedToServer = false;
     if (!args().m_restartable) {
         m_events->add_event(EventType::QUIT);
     }
     else if (!m_suspended) {
-        scheduleClientRestart(nextRestartTimeout());
+        scheduleClientRestart(isScanning() && !wasServer ? advanceServerCandidate()
+                                                         : nextRestartTimeout());
     }
     updateStatus();
 }
@@ -319,6 +391,12 @@ Client* ClientApp::openClient(const std::string& name, const NetworkAddress& add
         new TCPSocketFactory(m_events, getSocketMultiplexer()),
         screen,
         args());
+
+    if (isScanning()) {
+        // The default timeout is fifteen seconds, which across a range of
+        // dead addresses would take minutes to reach the server.
+        client->setConnectTimeout(kScanConnectTimeout);
+    }
 
     try {
         m_events->add_handler(EventType::CLIENT_CONNECTED, client->get_event_target(),

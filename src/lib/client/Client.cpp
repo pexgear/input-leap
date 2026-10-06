@@ -71,7 +71,8 @@ Client::Client(IEventQueue* events, const std::string& name, const NetworkAddres
     m_useSecureNetwork(args.m_enableCrypto),
     m_args(args),
     m_enableClipboard(true),
-    m_maximumClipboardSize(INT_MAX)
+    m_maximumClipboardSize(INT_MAX),
+    m_connectTimeout(15.0)
 {
     assert(m_socketFactory != nullptr);
     assert(m_screen != nullptr);
@@ -161,6 +162,18 @@ Client::connect()
         sendConnectionFailedEvent(e.what());
         return;
     }
+}
+
+void
+Client::setServerAddress(const NetworkAddress& address)
+{
+    m_serverAddress = address;
+}
+
+void
+Client::setConnectTimeout(double seconds)
+{
+    m_connectTimeout = seconds;
 }
 
 void
@@ -488,7 +501,7 @@ Client::setupTimer()
 {
     assert(m_timer == nullptr);
 
-    m_timer = m_events->newOneShotTimer(15.0, nullptr);
+    m_timer = m_events->newOneShotTimer(m_connectTimeout, nullptr);
     m_events->add_handler(EventType::TIMER, m_timer,
                           [this](const auto& e){ handle_connect_timeout(); });
 }

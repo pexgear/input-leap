@@ -22,7 +22,10 @@
 #include "base/Fwd.h"
 #include "net/Fwd.h"
 #include "inputleap/App.h"
+#include "net/NetworkAddress.h"
 #include "ClientArgs.h"
+
+#include <vector>
 
 namespace inputleap {
 
@@ -79,9 +82,18 @@ public:
 private:
     std::unique_ptr<IPlatformScreen> create_platform_screen();
 
+    // True when the server address was given as a range of candidates.
+    bool isScanning() const;
+    // Points the client at the next candidate and returns how long to wait
+    // before trying it.
+    double advanceServerCandidate();
+
     Client* m_client;
     std::unique_ptr<inputleap::Screen> m_clientScreen;
     NetworkAddress* m_serverAddress;
+    std::vector<NetworkAddress> m_serverCandidates;
+    std::size_t m_serverCandidateIndex = 0;
+    bool m_connectedToServer = false;
 };
 
 } // namespace inputleap

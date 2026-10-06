@@ -176,7 +176,14 @@
         </widget>
        </item>
        <item row="2" column="1">
-        <widget class="QLineEdit" name="m_pLineEditHostname"/>
+        <widget class="QLineEdit" name="m_pLineEditHostname">
+         <property name="toolTip">
+          <string>The server's hostname or IP address, or a range of IPv4 addresses to search, such as 192.168.1.10-50</string>
+         </property>
+         <property name="placeholderText">
+          <string>192.168.1.10 or 192.168.1.10-50</string>
+         </property>
+        </widget>
        </item>
        <item row="3" column="0">
         <widget class="QCheckBox" name="m_pCheckBoxAutoConfig">

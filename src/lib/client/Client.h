@@ -68,6 +68,22 @@ public:
     */
     void connect();
 
+    //! Change the server address
+    /*!
+    Sets the address used by the next call to \c connect().  The client
+    is reused across reconnect attempts, so this is how a caller moves on
+    to another candidate server.  Has no effect on a connection already
+    in progress.
+    */
+    void setServerAddress(const NetworkAddress& address);
+
+    //! Set the connection timeout
+    /*!
+    Sets how many seconds a connection attempt may take, up to the server's
+    hello, before it is abandoned.
+    */
+    void setConnectTimeout(double seconds);
+
     //! Disconnect
     /*!
     Disconnects from the server with an optional error message.
@@ -217,6 +233,7 @@ private:
     ClientArgs m_args;
     bool m_enableClipboard;
     size_t m_maximumClipboardSize;
+    double m_connectTimeout;
 };
 
 } // namespace inputleap
