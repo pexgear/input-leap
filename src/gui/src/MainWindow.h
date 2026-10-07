@@ -159,6 +159,7 @@ public slots:
         void downloadBonjour();
         void promptAutoConfig();
         void checkConnected(const QString& line);
+        void showConnectedNotification();
         void checkFingerprint(const QString& line);
         void restart_cmd_app();
         void proofreadInfo();
@@ -175,6 +176,8 @@ public slots:
         QTemporaryFile* m_pTempConfigFile;
         QSystemTrayIcon* m_pTrayIcon;
         QMenu* m_pTrayIconMenu;
+        QString last_connect_target_;
+        static constexpr int kConnectedNotificationMs = 1500;
         bool m_AlreadyHidden;
         IpcClient m_IpcClient;
         QMenuBar* m_pMenuBar;

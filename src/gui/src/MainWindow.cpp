@@ -454,8 +454,43 @@ void MainWindow::updateFromLogLine(const QString &line)
     checkFingerprint(line);
 }
 
+void MainWindow::showConnectedNotification()
+{
+    if (!m_pTrayIcon || !QSystemTrayIcon::supportsMessages()) {
+        return;
+    }
+
+    QString message = last_connect_target_.isEmpty()
+            ? tr("Connected to server")
+            : tr("Connected to server %1").arg(last_connect_target_);
+    m_pTrayIcon->showMessage("InputLeap", message, QSystemTrayIcon::Information,
+                             kConnectedNotificationMs);
+
+    // Windows ignores the requested timeout and keeps a notification up for
+    // as long as its accessibility setting says (five seconds by default).
+    // Re-sending it with no text is the documented way to withdraw it early.
+    QTimer::singleShot(kConnectedNotificationMs, this, [this]() {
+        if (m_pTrayIcon) {
+            m_pTrayIcon->showMessage(QString(), QString(), QSystemTrayIcon::NoIcon, 0);
+        }
+    });
+}
+
 void MainWindow::checkConnected(const QString& line)
 {
+    // The client logs the host it is about to try just before "connected to
+    // server", which itself names no host; remember it so the notification
+    // can say which address of a range answered.
+    static const QRegularExpression connecting_re("connecting to '([^']*)'");
+    auto match = connecting_re.match(line);
+    if (match.hasMatch()) {
+        last_connect_target_ = match.captured(1);
+    }
+
+    if (line.contains("connected to server")) {
+        showConnectedNotification();
+    }
+
     // TODO: implement ipc connection state messages to replace this hack.
     if (line.contains("started server") ||
         line.contains("connected to server") ||
