@@ -192,6 +192,9 @@ void ServerConfig::loadSettings()
     settings().endArray();
 
     settings().endGroup();
+
+    // monitors may have been added, removed or rearranged since last saved
+    refreshServerMonitors(m_ServerName);
 }
 
 int ServerConfig::adjacentScreenIndex(int idx, int deltaColumn, int deltaRow) const
@@ -212,12 +215,107 @@ int ServerConfig::adjacentScreenIndex(int idx, int deltaColumn, int deltaRow) co
     return arrayPos;
 }
 
+void ServerConfig::removeServerCells(std::vector<Screen>& cells, const QString& name)
+{
+    for (Screen& cell : cells) {
+        if (!cell.isNull() && cell.name() == name)
+            cell = Screen();
+    }
+}
+
+bool ServerConfig::placeServerBlock(std::vector<Screen>& cells, int columns, int rows,
+                                    int anchorColumn, int anchorRow, const Screen& server,
+                                    const MonitorLayout& layout)
+{
+    const int count = layout.isSplit() ? layout.count() : 1;
+
+    // check every target first so a block that does not fit changes nothing
+    for (int k = 0; k < count; k++) {
+        QPoint offset = layout.isSplit() ? layout.cellOffset(k) : QPoint();
+        int column = anchorColumn + offset.x();
+        int row = anchorRow + offset.y();
+        if (column < 0 || column >= columns || row < 0 || row >= rows)
+            return false;
+        if (!cells[row * columns + column].isNull())
+            return false;
+    }
+
+    for (int k = 0; k < count; k++) {
+        QPoint offset = layout.isSplit() ? layout.cellOffset(k) : QPoint();
+        Screen cell = server;
+        cell.setMonitor(layout.isSplit() ? k : -1);
+        cells[(anchorRow + offset.y()) * columns + anchorColumn + offset.x()] = cell;
+    }
+    return true;
+}
+
+bool ServerConfig::refreshServerMonitors(const QString& serverName)
+{
+    m_ServerMonitors = MonitorLayout::fromRects(MonitorLayout::currentMonitorRects());
+
+    // The server's position is the cell of its first monitor, or its only
+    // cell if it was not split before.
+    int anchor = -1;
+    for (std::size_t i = 0; i < screens().size(); i++) {
+        const Screen& cell = screens()[i];
+        if (cell.isNull() || cell.name() != serverName)
+            continue;
+        if (anchor == -1 || cell.monitor() == 0)
+            anchor = static_cast<int>(i);
+    }
+    if (anchor == -1)
+        return true;
+
+    Screen server = screens()[anchor];
+    removeServerCells(screens(), serverName);
+    if (placeServerBlock(screens(), numColumns(), numRows(), anchor % numColumns(),
+                         anchor / numColumns(), server, m_ServerMonitors)) {
+        return true;
+    }
+
+    // Another computer sits where a monitor would go. Keep the server as one
+    // cell rather than move the user's layout around behind their back.
+    m_ServerMonitors = MonitorLayout();
+    placeServerBlock(screens(), numColumns(), numRows(), anchor % numColumns(),
+                     anchor / numColumns(), server, m_ServerMonitors);
+    return false;
+}
+
+QString ServerConfig::linkInterval(const Screen& cell, int dirIndex) const
+{
+    // whole computers, and a server shown as one cell, link along a full edge
+    if (!cell.isMonitorCell() || !m_ServerMonitors.isSplit()
+            || cell.monitor() >= m_ServerMonitors.count())
+        return QString("");
+
+    static const MonitorLayout::Edge edges[] = {
+        MonitorLayout::Edge::Right, MonitorLayout::Edge::Left,
+        MonitorLayout::Edge::Top, MonitorLayout::Edge::Bottom,
+    };
+    double start = 0;
+    double end = 0;
+    if (!m_ServerMonitors.edgeInterval(cell.monitor(), edges[dirIndex], start, end))
+        return QString();
+
+    // the config file takes whole percentages, the same rounding the server
+    // itself uses when it writes intervals back out
+    int from = static_cast<int>(start * 100.0 + 0.5);
+    int to = static_cast<int>(end * 100.0 + 0.5);
+    if (from >= to)
+        return QString();
+    if (from == 0 && to == 100)
+        return QString("");
+    return QString("(%1,%2)").arg(from).arg(to);
+}
+
 QTextStream& operator<<(QTextStream& outStream, const ServerConfig& config)
 {
+    // A server split into monitor cells appears in the grid once per monitor
+    // but is one screen to the server, so it is written once.
     outStream << "section: screens\n";
 
     for (const Screen& s : config.screens()) {
-        if (!s.isNull())
+        if (!s.isNull() && s.monitor() <= 0)
             s.writeScreensSection(outStream);
     }
 
@@ -226,7 +324,7 @@ QTextStream& operator<<(QTextStream& outStream, const ServerConfig& config)
     outStream << "section: aliases\n";
 
     for (const Screen& s : config.screens()) {
-        if (!s.isNull())
+        if (!s.isNull() && s.monitor() <= 0)
             s.writeAliasesSection(outStream);
     }
 
@@ -234,19 +332,48 @@ QTextStream& operator<<(QTextStream& outStream, const ServerConfig& config)
 
     outStream << "section: links\n";
 
+    static const int opposite[] = { 1, 0, 3, 2 };
+    QStringList names;
+    QMap<QString, QStringList> links;
     for (std::size_t i = 0; i < config.screens().size(); i++)
-        if (!config.screens()[i].isNull())
-        {
-            outStream << "\t" << config.screens()[i].name() << ":\n";
-
-            for (unsigned int j = 0; j < sizeof(neighbourDirs) / sizeof(neighbourDirs[0]); j++)
-            {
-                int idx = config.adjacentScreenIndex(static_cast<int>(i),
-                                                     neighbourDirs[j].x, neighbourDirs[j].y);
-                if (idx != -1 && !config.screens()[idx].isNull())
-                    outStream << "\t\t" << neighbourDirs[j].name << " = " << config.screens()[idx].name() << "\n";
-            }
+    {
+        const Screen& cell = config.screens()[i];
+        if (cell.isNull())
+            continue;
+        if (!links.contains(cell.name())) {
+            names << cell.name();
+            links[cell.name()] = QStringList();
         }
+
+        for (int j = 0; j < static_cast<int>(sizeof(neighbourDirs) / sizeof(neighbourDirs[0])); j++)
+        {
+            int idx = config.adjacentScreenIndex(static_cast<int>(i),
+                                                 neighbourDirs[j].x, neighbourDirs[j].y);
+            if (idx == -1 || config.screens()[idx].isNull())
+                continue;
+            const Screen& neighbour = config.screens()[idx];
+            // two monitors of the same server: the cursor moves between them
+            // on its own
+            if (neighbour.name() == cell.name())
+                continue;
+
+            // a null interval means that monitor does not reach the edge, so
+            // the cursor can never leave it in that direction
+            QString from = config.linkInterval(cell, j);
+            QString to = config.linkInterval(neighbour, opposite[j]);
+            if (from.isNull() || to.isNull())
+                continue;
+
+            links[cell.name()] << QString("\t\t%1%2 = %3%4\n")
+                    .arg(neighbourDirs[j].name, from, neighbour.name(), to);
+        }
+    }
+
+    for (const QString& name : names) {
+        outStream << "\t" << name << ":\n";
+        for (const QString& line : links[name])
+            outStream << line;
+    }
 
     outStream << "end\n\n";
 

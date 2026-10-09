@@ -64,6 +64,7 @@ void Screen::loadSettings(QSettings& settings)
     if (name().isEmpty())
         return;
 
+    setMonitor(settings.value("monitor", -1).toInt());
     setSwitchCornerSize(settings.value("switchCornerSize").toInt());
 
     readSettings<QString>(settings, aliases(), "alias", QString(""));
@@ -77,6 +78,8 @@ void Screen::loadSettings(QSettings& settings)
 void Screen::saveSettings(QSettings& settings) const
 {
     settings.setValue("name", name());
+    if (isMonitorCell())
+        settings.setValue("monitor", monitor());
 
     if (name().isEmpty())
         return;
@@ -147,19 +150,23 @@ QDataStream& operator<<(QDataStream& outStream, const Screen& screen)
         << modifiers
         << screen.switchCorners()
         << screen.fixes()
+        << screen.monitor()
         ;
 }
 
 QDataStream& operator>>(QDataStream& inStream, Screen& screen)
 {
     QList<int> modifiers;
-    return inStream
+    // This used to return here, so the modifiers below were never restored
+    // and a dragged screen silently lost its modifier remapping.
+    inStream
         >> screen.m_Name
         >> screen.m_SwitchCornerSize
         >> screen.m_Aliases
         >> modifiers
         >> screen.m_SwitchCorners
         >> screen.m_Fixes
+        >> screen.m_Monitor
         ;
 
     screen.m_Modifiers.clear();

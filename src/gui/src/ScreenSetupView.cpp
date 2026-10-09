@@ -73,8 +73,13 @@ void ScreenSetupView::enter(const QModelIndex& index)
     Screen& screen = model()->screen(index);
     if (screen.isNull())
         screen = Screen(tr("Unnamed"));
+    const QString oldName = screen.name();
     ScreenSettingsDialog dlg(this, &screen);
     dlg.exec();
+
+    // the server's monitor cells are one screen, so they must stay identical
+    if (screen.isMonitorCell())
+        model()->updateServerCells(Screen(screen), oldName);
 }
 
 void ScreenSetupView::remove(const QModelIndex& index)
@@ -82,7 +87,9 @@ void ScreenSetupView::remove(const QModelIndex& index)
     if (!index.isValid())
         return;
     Screen& screen = model()->screen(index);
-    if (!screen.isNull()) {
+    if (screen.isMonitorCell()) {
+        model()->removeServer(screen.name());
+    } else if (!screen.isNull()) {
         screen = Screen();
         dataChanged(index, index);
     }
@@ -123,7 +130,10 @@ void ScreenSetupView::keyPressEvent(QKeyEvent* event)
             else if (event->key() == Qt::Key_Down)
                 toIndex = fromIndex.sibling(fromIndex.row() + 1, fromIndex.column());
 
-            if (toIndex.isValid() && fromIndex != toIndex)
+            // swapping one monitor cell would split the server; drag it instead
+            if (toIndex.isValid() && fromIndex != toIndex
+                    && !model()->screen(fromIndex).isMonitorCell()
+                    && !model()->screen(toIndex).isMonitorCell())
                 std::swap(model()->screen(fromIndex), model()->screen(toIndex));
         }
         // In this case let base also handle the event, because it will proceed moving
@@ -207,13 +217,22 @@ void ScreenSetupView::startDrag(Qt::DropActions)
     pDrag->setMimeData(pData);
     pDrag->setHotSpot(QPoint(pixmap.width() / 2, pixmap.height() / 2));
 
+    const Screen dragged = model()->screen(indexes[0]);
     if (pDrag->exec(Qt::MoveAction, Qt::MoveAction) == Qt::MoveAction)
     {
         selectionModel()->clear();
 
+        if (model()->takeBlockMoved()) {
+            // the server's monitors were moved as a group; the cell the drag
+            // started from may now hold one of them
+        }
+        else if (dragged.isMonitorCell()) {
+            // dropped on the trash: the whole server goes
+            model()->removeServer(dragged.name());
+        }
         // make sure to only delete the drag source if screens weren't swapped
         // see ScreenSetupModel::dropMimeData
-        if (!model()->screen(indexes[0]).swapped())
+        else if (!model()->screen(indexes[0]).swapped())
             model()->screen(indexes[0]) = Screen();
         else
             model()->screen(indexes[0]).setSwapped(false);

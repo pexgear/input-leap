@@ -18,6 +18,8 @@
 
 #include "ScreenSetupModel.h"
 #include "Screen.h"
+#include "ServerConfig.h"
+#include "MonitorLayout.h"
 
 #include <QtCore>
 #include <QtGui>
@@ -48,6 +50,13 @@ QVariant ScreenSetupModel::data(const QModelIndex& index, int role) const
             case Qt::ToolTipRole:
                 if (screen(index).isNull())
                     break;
+                if (screen(index).isMonitorCell())
+                    return QString(tr(
+                            "<center>Screen: <b>%1</b>, monitor %2</center>"
+                            "<br>Place a computer next to this monitor to link it to this monitor only"
+                            "<br>Dragging moves all of this computer's monitors"
+                            "<br>Double click to edit settings"))
+                            .arg(screen(index).name()).arg(screen(index).monitor() + 1);
                 return QString(tr(
                             "<center>Screen: <b>%1</b></center>"
                             "<br>Double click to edit settings"
@@ -56,6 +65,8 @@ QVariant ScreenSetupModel::data(const QModelIndex& index, int role) const
             case Qt::DisplayRole:
                 if (screen(index).isNull())
                     break;
+                if (screen(index).isMonitorCell())
+                    return QString("%1 (%2)").arg(screen(index).name()).arg(screen(index).monitor() + 1);
                 return screen(index).name();
         default:
             break;
@@ -135,6 +146,32 @@ bool ScreenSetupModel::dropMimeData(const QMimeData* data, Qt::DropAction action
     Screen droppedScreen;
     stream >> droppedScreen;
 
+    if (droppedScreen.isMonitorCell() && m_ServerMonitors && m_ServerMonitors->isSplit()
+            && droppedScreen.monitor() < m_ServerMonitors->count())
+    {
+        // Move all of the server's monitors together, keeping their
+        // arrangement, so that the one being dragged lands where it was
+        // dropped. Refuse if any of them would not fit.
+        QPoint offset = m_ServerMonitors->cellOffset(droppedScreen.monitor());
+        std::vector<Screen> cells = m_Screens;
+        ServerConfig::removeServerCells(cells, droppedScreen.name());
+        if (!ServerConfig::placeServerBlock(cells, m_NumColumns, m_NumRows,
+                                            parent.column() - offset.x(),
+                                            parent.row() - offset.y(),
+                                            droppedScreen, *m_ServerMonitors))
+            return false;
+
+        m_Screens = cells;
+        m_BlockMoved = true;
+        allDataChanged();
+        return true;
+    }
+
+    // Swapping another screen into one monitor's cell would tear the server
+    // apart, so a monitor cell is never a drop target for anything else.
+    if (screen(parent.column(), parent.row()).isMonitorCell())
+        return false;
+
     Screen oldScreen = screen(parent.column(), parent.row());
     if (!oldScreen.isNull() && sourceColumn != -1 && sourceRow != -1)
     {
@@ -147,4 +184,41 @@ bool ScreenSetupModel::dropMimeData(const QMimeData* data, Qt::DropAction action
     screen(parent.column(), parent.row()) = droppedScreen;
 
     return true;
+}
+
+void ScreenSetupModel::setServerMonitors(const QString& serverName, const MonitorLayout* layout)
+{
+    m_ServerName = serverName;
+    m_ServerMonitors = layout;
+    allDataChanged();
+}
+
+bool ScreenSetupModel::takeBlockMoved()
+{
+    bool moved = m_BlockMoved;
+    m_BlockMoved = false;
+    return moved;
+}
+
+void ScreenSetupModel::removeServer(const QString& name)
+{
+    ServerConfig::removeServerCells(m_Screens, name);
+    allDataChanged();
+}
+
+void ScreenSetupModel::updateServerCells(const Screen& edited, const QString& oldName)
+{
+    for (Screen& cell : m_Screens) {
+        if (cell.isNull() || cell.name() != oldName)
+            continue;
+        int monitor = cell.monitor();
+        cell = edited;
+        cell.setMonitor(monitor);
+    }
+    allDataChanged();
+}
+
+void ScreenSetupModel::allDataChanged()
+{
+    emit dataChanged(index(0, 0), index(m_NumRows - 1, m_NumColumns - 1));
 }

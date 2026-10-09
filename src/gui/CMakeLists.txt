@@ -13,12 +13,14 @@ set(GUI_COMMON_SOURCE_FILES
     src/Action.cpp
     src/Hotkey.cpp
     src/KeySequence.cpp
+    src/MonitorLayout.cpp
 )
 
 set(GUI_COMMON_HEADER_FILES
     src/Action.h
     src/Hotkey.h
     src/KeySequence.h
+    src/MonitorLayout.h
 )
 
 set(GUI_SOURCE_FILES
@@ -252,6 +254,7 @@ if(INPUTLEAP_BUILD_TESTS)
     set(GUI_TEST_SOURCE_FILES
         test/KeySequenceTests.cpp
         test/HotkeyTests.cpp
+        test/MonitorLayoutTests.cpp
         test/main.cpp
     )
 

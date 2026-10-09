@@ -72,6 +72,19 @@ ServerConfigDialog::ServerConfigDialog(QWidget* parent, ServerConfig& config, co
 
     if (serverConfig().numScreens() == 0)
         model().screen(serverConfig().numColumns() / 2, serverConfig().numRows() / 2) = Screen(defaultScreenName);
+
+    bool fitted = serverConfig().refreshServerMonitors(defaultScreenName);
+    model().setServerMonitors(defaultScreenName, &serverConfig().serverMonitors());
+    if (!fitted) {
+        // after the dialog is up, so the message has a window to sit over
+        QTimer::singleShot(0, this, [this]() {
+            QMessageBox::information(this, tr("Monitors"),
+                tr("This computer's monitors could not be shown separately because "
+                   "another computer is next to it in the grid where a monitor "
+                   "would go.\n\nMove that computer away from this one, then close "
+                   "and reopen this window."));
+        });
+    }
 }
 
 void ServerConfigDialog::accept()

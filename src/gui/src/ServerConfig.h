@@ -23,6 +23,7 @@
 #include "Screen.h"
 #include "BaseConfig.h"
 #include "Hotkey.h"
+#include "MonitorLayout.h"
 
 class QTextStream;
 class QSettings;
@@ -71,6 +72,27 @@ class ServerConfig : public BaseConfig
         int numScreens() const;
         int autoAddScreen(const QString name);
 
+        const MonitorLayout& serverMonitors() const { return m_ServerMonitors; }
+
+        /*!
+        Reads this computer's monitors and lays the server named \p serverName
+        out as one cell per monitor, keeping its first monitor where the server
+        was. Returns false when another screen is in the way; the server is then
+        kept as a single cell.
+        */
+        bool refreshServerMonitors(const QString& serverName);
+
+        static void removeServerCells(std::vector<Screen>& cells, const QString& name);
+
+        /*!
+        Writes the server's cells into \p cells with its first monitor at the
+        given cell. Changes nothing and returns false if any of them would fall
+        outside the grid or on an occupied cell.
+        */
+        static bool placeServerBlock(std::vector<Screen>& cells, int columns, int rows,
+                                     int anchorColumn, int anchorRow, const Screen& server,
+                                     const MonitorLayout& layout);
+
     protected:
         QSettings& settings() { return *m_pSettings; }
         std::vector<Screen>& screens() { return m_Screens; }
@@ -100,6 +122,9 @@ class ServerConfig : public BaseConfig
         int adjacentScreenIndex(int idx, int deltaColumn, int deltaRow) const;
 
     private:
+        // "(a,b)" for the part of the edge \p cell owns, "" for a whole edge,
+        // or a null string when the cursor cannot cross that edge of \p cell
+        QString linkInterval(const Screen& cell, int dirIndex) const;
         bool findScreenName(const QString& name, int& index);
         bool fixNoServer(const QString& name, int& index);
         int showAddClientDialog(const QString& clientName);
@@ -128,6 +153,7 @@ class ServerConfig : public BaseConfig
         bool m_ClipboardSharing;
         size_t m_ClipboardSharingSize;
         MainWindow* m_pMainWindow;
+        MonitorLayout m_ServerMonitors;
 };
 
 QTextStream& operator<<(QTextStream& outStream, const ServerConfig& config);

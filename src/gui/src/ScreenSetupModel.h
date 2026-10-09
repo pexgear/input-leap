@@ -25,6 +25,7 @@
 
 #include "Screen.h"
 
+class MonitorLayout;
 class ScreenSetupView;
 class ServerConfigDialog;
 
@@ -50,7 +51,19 @@ class ScreenSetupModel : public QAbstractTableModel
         QStringList mimeTypes() const override;
         QMimeData* mimeData(const QModelIndexList& indexes) const override;
 
+        // \p layout must outlive the model; it is the server config's own.
+        void setServerMonitors(const QString& serverName, const MonitorLayout* layout);
+
     protected:
+        // True once after a drop moved the server's monitor cells as a group,
+        // so the view knows not to clear the cell the drag started from.
+        bool takeBlockMoved();
+        void removeServer(const QString& name);
+        // Copies \p edited's settings onto every cell of the server that was
+        // called \p oldName, keeping each cell's monitor number.
+        void updateServerCells(const Screen& edited, const QString& oldName);
+        void allDataChanged();
+
         bool dropMimeData(const QMimeData* data, Qt::DropAction action, int row, int column, const QModelIndex& parent) override;
         const Screen& screen(const QModelIndex& index) const { return screen(index.column(), index.row()); }
         Screen& screen(const QModelIndex& index) { return screen(index.column(), index.row()); }
@@ -61,6 +74,9 @@ class ScreenSetupModel : public QAbstractTableModel
         std::vector<Screen>& m_Screens;
         const int m_NumColumns;
         const int m_NumRows;
+        QString m_ServerName;
+        const MonitorLayout* m_ServerMonitors = nullptr;
+        bool m_BlockMoved = false;
 
         static const QString m_MimeType;
 };

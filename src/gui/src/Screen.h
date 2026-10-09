@@ -70,6 +70,13 @@ class Screen : public BaseConfig
         QString& name() { return m_Name; }
         void setName(const QString& name) { m_Name = name; }
 
+        // Which of the server's monitors this cell stands for, or -1 for a
+        // whole computer. The server occupies one cell per monitor when it
+        // has several; every such cell carries the same settings.
+        int monitor() const { return m_Monitor; }
+        bool isMonitorCell() const { return m_Monitor >= 0; }
+        void setMonitor(int monitor) { m_Monitor = monitor; }
+
     protected:
         void init();
         QPixmap* pixmap() { return &m_Pixmap; }
@@ -97,6 +104,7 @@ class Screen : public BaseConfig
         QList<bool> m_Fixes;
 
         bool m_Swapped;
+        int m_Monitor = -1;
 };
 
 QDataStream& operator<<(QDataStream& outStream, const Screen& screen);

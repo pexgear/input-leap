@@ -771,6 +771,9 @@ QString MainWindow::configFilename()
             return "";
         }
 
+        // the partial-edge links are worked out from the monitors as they are
+        // now, not as they were when the grid was last edited
+        serverConfig().refreshServerMonitors(appConfig().screenName());
         serverConfig().save(*m_pTempConfigFile);
         filename = m_pTempConfigFile->fileName();
 
